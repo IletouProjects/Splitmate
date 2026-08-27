@@ -1,0 +1,413 @@
+<main class="shell">
+  <header class="hero">
+    <div>
+      <p class="eyebrow">SPLITMATE</p>
+      <h1>Partagez les dépenses. Gardez les comptes simples.</h1>
+      <p class="hero-copy">
+        Ajoutez les participants et les dépenses, puis laissez SplitMate
+        calculer les soldes et les remboursements.
+      </p>
+    </div>
+  </header>
+
+  @if (errorMessage()) {
+    <div class="message error">
+      {{ errorMessage() }}
+    </div>
+  }
+
+  @if (successMessage()) {
+    <div class="message success">
+      {{ successMessage() }}
+    </div>
+  }
+
+  @if (!group()) {
+    <section class="card onboarding">
+      <p class="section-kicker">NOUVEAU GROUPE</p>
+      <h2>Commencer un partage de dépenses</h2>
+
+      <form
+        [formGroup]="groupForm"
+        (ngSubmit)="createGroup()"
+        class="stack"
+      >
+        <label>
+          Nom du groupe
+          <input
+            type="text"
+            formControlName="name"
+            placeholder="Ex. Voyage Abidjan"
+          />
+        </label>
+
+        <button
+          type="submit"
+          class="primary"
+        >
+          Créer le groupe
+        </button>
+      </form>
+    </section>
+  } @else {
+    <section class="summary">
+      <div>
+        <p class="section-kicker">GROUPE ACTIF</p>
+        <h2>{{ group()!.name }}</h2>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <strong>{{ participants().length }}</strong>
+          <span>participants</span>
+        </div>
+
+        <div class="metric">
+          <strong>{{ formatFcfa(totalExpenses()) }}</strong>
+          <span>dépensés</span>
+        </div>
+
+        <div class="metric">
+          <strong>{{ expenses().length }}</strong>
+          <span>dépenses</span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        class="ghost danger"
+        (click)="resetGroup()"
+      >
+        Réinitialiser
+      </button>
+    </section>
+
+    <div class="grid two-columns">
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">PARTICIPANTS</p>
+            <h2>Qui participe ?</h2>
+          </div>
+        </div>
+
+        <form
+          [formGroup]="participantForm"
+          (ngSubmit)="addParticipant()"
+          class="inline-form"
+        >
+          <input
+            type="text"
+            formControlName="name"
+            placeholder="Nom du participant"
+          />
+
+          <button
+            type="submit"
+            class="primary"
+          >
+            Ajouter
+          </button>
+        </form>
+
+        @if (participants().length === 0) {
+          <p class="empty">
+            Aucun participant pour le moment.
+          </p>
+        } @else {
+          <div class="chips">
+            @for (
+              participant of participants();
+              track participant.id
+            ) {
+              <div class="chip">
+                <span>{{ participant.name }}</span>
+                <button
+                  type="button"
+                  aria-label="Supprimer le participant"
+                  (click)="removeParticipant(participant.id)"
+                >
+                  ×
+                </button>
+              </div>
+            }
+          </div>
+        }
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">DÉPENSE</p>
+            <h2>
+              {{
+                editingExpenseId()
+                  ? 'Modifier une dépense'
+                  : 'Ajouter une dépense'
+              }}
+            </h2>
+          </div>
+        </div>
+
+        @if (participants().length === 0) {
+          <p class="empty">
+            Ajoutez au moins un participant avant de créer une dépense.
+          </p>
+        } @else {
+          <form
+            [formGroup]="expenseForm"
+            (ngSubmit)="submitExpense()"
+            class="stack"
+          >
+            <label>
+              Libellé
+              <input
+                type="text"
+                formControlName="title"
+                placeholder="Ex. Hôtel"
+              />
+            </label>
+
+            <label>
+              Montant (FCFA)
+              <input
+                type="number"
+                min="1"
+                step="1"
+                formControlName="amount"
+              />
+            </label>
+
+            <label>
+              Payé par
+              <select formControlName="paidBy">
+                <option value="">
+                  Sélectionner
+                </option>
+
+                @for (
+                  participant of participants();
+                  track participant.id
+                ) {
+                  <option
+                    [value]="participant.id"
+                  >
+                    {{ participant.name }}
+                  </option>
+                }
+              </select>
+            </label>
+
+            <fieldset>
+              <legend>Bénéficiaires</legend>
+
+              <div class="beneficiary-actions">
+                <button
+                  type="button"
+                  class="link"
+                  (click)="selectAllBeneficiaries()"
+                >
+                  Tout sélectionner
+                </button>
+
+                <button
+                  type="button"
+                  class="link"
+                  (click)="clearBeneficiaries()"
+                >
+                  Tout retirer
+                </button>
+              </div>
+
+              <div class="check-list">
+                @for (
+                  participant of participants();
+                  track participant.id
+                ) {
+                  <label class="check">
+                    <input
+                      type="checkbox"
+                      [checked]="isBeneficiarySelected(participant.id)"
+                      (change)="toggleBeneficiary(
+                        participant.id,
+                        $any($event.target).checked
+                      )"
+                    />
+
+                    <span>{{ participant.name }}</span>
+                  </label>
+                }
+              </div>
+            </fieldset>
+
+            <div class="actions">
+              <button
+                type="submit"
+                class="primary"
+              >
+                {{
+                  editingExpenseId()
+                    ? 'Enregistrer'
+                    : 'Ajouter la dépense'
+                }}
+              </button>
+
+              @if (editingExpenseId()) {
+                <button
+                  type="button"
+                  class="ghost"
+                  (click)="cancelExpenseEdit()"
+                >
+                  Annuler
+                </button>
+              }
+            </div>
+          </form>
+        }
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <p class="section-kicker">HISTORIQUE</p>
+          <h2>Dépenses</h2>
+        </div>
+      </div>
+
+      @if (expenses().length === 0) {
+        <p class="empty">
+          Aucune dépense enregistrée.
+        </p>
+      } @else {
+        <div class="expense-list">
+          @for (
+            expense of expenses();
+            track expense.id
+          ) {
+            <article class="expense-row">
+              <div>
+                <strong>{{ expense.title }}</strong>
+                <span>
+                  Payé par {{ participantName(expense.paidBy) }}
+                  · {{ expense.participantIds.length }} bénéficiaire(s)
+                </span>
+              </div>
+
+              <div class="expense-amount">
+                {{ formatFcfa(expense.amount) }}
+              </div>
+
+              <div class="row-actions">
+                <button
+                  type="button"
+                  class="link"
+                  (click)="editExpense(expense)"
+                >
+                  Modifier
+                </button>
+
+                <button
+                  type="button"
+                  class="link danger-text"
+                  (click)="removeExpense(expense.id)"
+                >
+                  Supprimer
+                </button>
+              </div>
+            </article>
+          }
+        </div>
+      }
+    </section>
+
+    <div class="grid two-columns">
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">SOLDES</p>
+            <h2>Situation de chacun</h2>
+          </div>
+        </div>
+
+        @if (expenses().length === 0) {
+          <p class="empty">
+            Les soldes apparaîtront après la première dépense.
+          </p>
+        } @else {
+          <div class="balance-list">
+            @for (
+              balance of balances();
+              track balance.participantId
+            ) {
+              <div class="balance-row">
+                <div>
+                  <strong>{{ balance.participantName }}</strong>
+                  <span>
+                    Payé {{ formatFcfa(balance.paid) }}
+                    · Dû {{ formatFcfa(balance.owed) }}
+                  </span>
+                </div>
+
+                <strong
+                  class="balance-value"
+                  [class.positive]="balance.balance > 0"
+                  [class.negative]="balance.balance < 0"
+                >
+                  {{
+                    balance.balance > 0 ? '+' : ''
+                  }}{{ formatFcfa(balance.balance) }}
+                </strong>
+              </div>
+            }
+          </div>
+        }
+      </section>
+
+      <section class="card settlement-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">REMBOURSEMENTS</p>
+            <h2>Qui rembourse qui ?</h2>
+          </div>
+        </div>
+
+        @if (expenses().length === 0) {
+          <p class="empty">
+            Ajoutez des dépenses pour calculer les remboursements.
+          </p>
+        } @else if (settlements().length === 0) {
+          <p class="balanced">
+            Tout est équilibré ✓
+          </p>
+        } @else {
+          <div class="settlement-list">
+            @for (
+              settlement of settlements();
+              track
+                settlement.fromParticipantId +
+                '-' +
+                settlement.toParticipantId
+            ) {
+              <article class="settlement-row">
+                <div>
+                  <strong>
+                    {{ settlement.fromParticipantName }}
+                  </strong>
+                  <span>rembourse</span>
+                  <strong>
+                    {{ settlement.toParticipantName }}
+                  </strong>
+                </div>
+
+                <strong>
+                  {{ formatFcfa(settlement.amount) }}
+                </strong>
+              </article>
+            }
+          </div>
+        }
+      </section>
+    </div>
+  }
+</main>
