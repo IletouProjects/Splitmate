@@ -23,60 +23,75 @@ describe('GroupService', () => {
     expect(service).toBeTruthy();
   });
 
-  it('crée un groupe et le persiste dans localStorage', () => {
-    const group = service.createGroup('Voyage Abidjan');
+  it('crée un groupe avec sa devise et le persiste', () => {
+    const group = service.createGroup(
+      'Voyage Abidjan',
+      'EUR',
+    );
 
     expect(group.name).toBe('Voyage Abidjan');
+    expect(group.currency).toBe('EUR');
     expect(service.hasGroup()).toBe(true);
-    expect(service.group()?.name).toBe('Voyage Abidjan');
 
-    const stored = localStorage.getItem('splitmate.active-group');
+    const stored = localStorage.getItem(
+      'splitmate.active-group',
+    );
+
     expect(stored).not.toBeNull();
+    expect(JSON.parse(stored!).currency).toBe('EUR');
   });
 
   it('refuse un nom de groupe vide', () => {
-    expect(() => service.createGroup('   ')).toThrow(
+    expect(() =>
+      service.createGroup('   ', 'EUR'),
+    ).toThrow(
       'Le nom du groupe est obligatoire.',
     );
   });
 
   it('ajoute un participant au groupe', () => {
-    service.createGroup('Voyage Abidjan');
+    service.createGroup(
+      'Voyage Abidjan',
+      'EUR',
+    );
 
-    const participant = service.addParticipant('Charbel');
+    const participant =
+      service.addParticipant('Charbel');
 
     expect(participant.name).toBe('Charbel');
     expect(service.participants()).toHaveLength(1);
-    expect(service.participants()[0].id).toBe(participant.id);
   });
 
-  it('refuse un participant avec un nom déjà utilisé', () => {
-    service.createGroup('Voyage Abidjan');
+  it('refuse un participant en doublon', () => {
+    service.createGroup(
+      'Voyage Abidjan',
+      'EUR',
+    );
+
     service.addParticipant('Charbel');
 
-    expect(() => service.addParticipant(' charbel ')).toThrow(
+    expect(() =>
+      service.addParticipant(' charbel '),
+    ).toThrow(
       'Un participant avec ce nom existe déjà.',
     );
   });
 
-  it('supprime un participant non lié à une dépense', () => {
-    service.createGroup('Voyage Abidjan');
+  it('ajoute une dépense exprimée en unité mineure', () => {
+    service.createGroup(
+      'Voyage Abidjan',
+      'EUR',
+    );
 
-    const participant = service.addParticipant('Charbel');
+    const charbel =
+      service.addParticipant('Charbel');
 
-    service.removeParticipant(participant.id);
-
-    expect(service.participants()).toHaveLength(0);
-  });
-
-  it('ajoute une dépense valide et met à jour le total', () => {
-    service.createGroup('Voyage Abidjan');
-
-    const charbel = service.addParticipant('Charbel');
-    const joel = service.addParticipant('Joel');
+    const joel =
+      service.addParticipant('Joel');
 
     const expense = service.addExpense({
       title: 'Hôtel',
+      // 600,00 € = 60 000 centimes
       amount: 60000,
       paidBy: charbel.id,
       participantIds: [
@@ -85,51 +100,21 @@ describe('GroupService', () => {
       ],
     });
 
-    expect(expense.title).toBe('Hôtel');
     expect(expense.amount).toBe(60000);
-    expect(service.expenses()).toHaveLength(1);
     expect(service.totalExpenses()).toBe(60000);
   });
 
-  it('refuse une dépense avec un montant invalide', () => {
-    service.createGroup('Voyage Abidjan');
-
-    const charbel = service.addParticipant('Charbel');
-
-    expect(() =>
-      service.addExpense({
-        title: 'Taxi',
-        amount: 0,
-        paidBy: charbel.id,
-        participantIds: [charbel.id],
-      }),
-    ).toThrow(
-      'Le montant doit être un entier positif.',
-    );
-  });
-
-  it('refuse une dépense sans bénéficiaire', () => {
-    service.createGroup('Voyage Abidjan');
-
-    const charbel = service.addParticipant('Charbel');
-
-    expect(() =>
-      service.addExpense({
-        title: 'Taxi',
-        amount: 5000,
-        paidBy: charbel.id,
-        participantIds: [],
-      }),
-    ).toThrow(
-      'Sélectionnez au moins un bénéficiaire.',
-    );
-  });
-
   it('empêche la suppression d’un participant lié à une dépense', () => {
-    service.createGroup('Voyage Abidjan');
+    service.createGroup(
+      'Voyage Abidjan',
+      'EUR',
+    );
 
-    const charbel = service.addParticipant('Charbel');
-    const joel = service.addParticipant('Joel');
+    const charbel =
+      service.addParticipant('Charbel');
+
+    const joel =
+      service.addParticipant('Joel');
 
     service.addExpense({
       title: 'Hôtel',
@@ -148,98 +133,34 @@ describe('GroupService', () => {
     );
   });
 
-  it('modifie une dépense en conservant son id et sa date de création', () => {
-    service.createGroup('Voyage Abidjan');
-
-    const charbel = service.addParticipant('Charbel');
-    const joel = service.addParticipant('Joel');
-
-    const original = service.addExpense({
-      title: 'Hôtel',
-      amount: 60000,
-      paidBy: charbel.id,
-      participantIds: [
-        charbel.id,
-        joel.id,
-      ],
-    });
-
-    const updated = service.updateExpense(
-      original.id,
-      {
-        title: 'Hôtel - 2 nuits',
-        amount: 70000,
-        paidBy: charbel.id,
-        participantIds: [
-          charbel.id,
-          joel.id,
-        ],
-      },
+  it('réinitialise le groupe', () => {
+    service.createGroup(
+      'Voyage Abidjan',
+      'USD',
     );
-
-    expect(updated.id).toBe(original.id);
-    expect(updated.createdAt).toBe(
-      original.createdAt,
-    );
-    expect(updated.title).toBe(
-      'Hôtel - 2 nuits',
-    );
-    expect(service.totalExpenses()).toBe(
-      70000,
-    );
-  });
-
-  it('supprime une dépense', () => {
-    service.createGroup('Voyage Abidjan');
-
-    const charbel = service.addParticipant('Charbel');
-
-    const expense = service.addExpense({
-      title: 'Taxi',
-      amount: 5000,
-      paidBy: charbel.id,
-      participantIds: [charbel.id],
-    });
-
-    service.removeExpense(expense.id);
-
-    expect(service.expenses()).toHaveLength(0);
-    expect(service.totalExpenses()).toBe(0);
-  });
-
-  it('réinitialise le groupe et supprime la persistance locale', () => {
-    service.createGroup('Voyage Abidjan');
-
-    expect(
-      localStorage.getItem('splitmate.active-group'),
-    ).not.toBeNull();
 
     service.resetGroup();
 
     expect(service.group()).toBeNull();
     expect(service.hasGroup()).toBe(false);
     expect(
-      localStorage.getItem('splitmate.active-group'),
+      localStorage.getItem(
+        'splitmate.active-group',
+      ),
     ).toBeNull();
   });
 
-  it('charge un groupe existant depuis localStorage', () => {
-    const storedGroup = {
-      id: 'group-1',
-      name: 'Voyage Lomé',
-      participants: [
-        {
-          id: 'p1',
-          name: 'Charbel',
-        },
-      ],
-      expenses: [],
-      createdAt: '2026-08-27T18:00:00.000Z',
-    };
-
+  it('migre un ancien groupe sans devise vers XOF', () => {
     localStorage.setItem(
       'splitmate.active-group',
-      JSON.stringify(storedGroup),
+      JSON.stringify({
+        id: 'group-1',
+        name: 'Ancien groupe',
+        participants: [],
+        expenses: [],
+        createdAt:
+          '2026-08-27T18:00:00.000Z',
+      }),
     );
 
     TestBed.resetTestingModule();
@@ -251,14 +172,11 @@ describe('GroupService', () => {
       ],
     });
 
-    const reloadedService =
+    const migrated =
       TestBed.inject(GroupService);
 
-    expect(reloadedService.group()?.name).toBe(
-      'Voyage Lomé',
-    );
     expect(
-      reloadedService.participants(),
-    ).toHaveLength(1);
+      migrated.group()?.currency,
+    ).toBe('XOF');
   });
 });

@@ -3,23 +3,18 @@ export interface Expense {
   title: string;
 
   /**
-   * Montant entier en FCFA.
-   * Pas de décimales dans le MVP.
+   * Montant stocké dans la plus petite unité monétaire.
+   *
+   * Exemples :
+   * - XOF : 12 500 FCFA -> 12 500
+   * - EUR : 12,50 € -> 1 250 centimes
+   * - USD : 12,50 $ -> 1 250 cents
+   *
+   * Cela évite les erreurs d'arrondi des nombres décimaux.
    */
   amount: number;
 
-  /**
-   * Identifiant de la personne ayant payé.
-   */
   paidBy: string;
-
-  /**
-   * Participants concernés par la dépense.
-   */
   participantIds: string[];
-
-  /**
-   * Date ISO pour faciliter la sérialisation localStorage.
-   */
   createdAt: string;
 }

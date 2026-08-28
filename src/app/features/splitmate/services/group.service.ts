@@ -6,6 +6,7 @@ import {
 } from '@angular/core';
 
 import { StorageService } from '../../../core/storage/storage.service';
+import { CurrencyCode } from '../models/currency.model';
 import { Expense } from '../models/expense.model';
 import { SplitGroup } from '../models/group.model';
 import { Participant } from '../models/participant.model';
@@ -21,23 +22,19 @@ export class GroupService {
   private readonly storage = inject(StorageService);
 
   private readonly groupState = signal<SplitGroup | null>(
-    this.storage.load<SplitGroup>(STORAGE_KEY),
+    this.loadStoredGroup(),
   );
 
   readonly group = this.groupState.asReadonly();
-
   readonly participants = computed(
     () => this.groupState()?.participants ?? [],
   );
-
   readonly expenses = computed(
     () => this.groupState()?.expenses ?? [],
   );
-
   readonly hasGroup = computed(
     () => this.groupState() !== null,
   );
-
   readonly totalExpenses = computed(() =>
     this.expenses().reduce(
       (total, expense) => total + expense.amount,
@@ -45,7 +42,7 @@ export class GroupService {
     ),
   );
 
-  createGroup(name: string): SplitGroup {
+  createGroup(name: string, currency: CurrencyCode): SplitGroup {
     const cleanName = name.trim();
 
     if (!cleanName) {
@@ -55,13 +52,13 @@ export class GroupService {
     const group: SplitGroup = {
       id: crypto.randomUUID(),
       name: cleanName,
+      currency,
       participants: [],
       expenses: [],
       createdAt: new Date().toISOString(),
     };
 
     this.updateGroup(group);
-
     return group;
   }
 
@@ -70,9 +67,7 @@ export class GroupService {
     const cleanName = name.trim();
 
     if (!cleanName) {
-      throw new Error(
-        'Le nom du participant est obligatoire.',
-      );
+      throw new Error('Le nom du participant est obligatoire.');
     }
 
     const duplicateExists = group.participants.some(
@@ -82,9 +77,7 @@ export class GroupService {
     );
 
     if (duplicateExists) {
-      throw new Error(
-        'Un participant avec ce nom existe déjà.',
-      );
+      throw new Error('Un participant avec ce nom existe déjà.');
     }
 
     const participant: Participant = {
@@ -94,10 +87,7 @@ export class GroupService {
 
     this.updateGroup({
       ...group,
-      participants: [
-        ...group.participants,
-        participant,
-      ],
+      participants: [...group.participants, participant],
     });
 
     return participant;
@@ -106,21 +96,14 @@ export class GroupService {
   removeParticipant(participantId: string): void {
     const group = this.requireGroup();
 
-    const participantExists = group.participants.some(
-      (participant) =>
-        participant.id === participantId,
-    );
-
-    if (!participantExists) {
+    if (!group.participants.some((p) => p.id === participantId)) {
       throw new Error('Participant introuvable.');
     }
 
     const participantUsedInExpense = group.expenses.some(
       (expense) =>
         expense.paidBy === participantId ||
-        expense.participantIds.includes(
-          participantId,
-        ),
+        expense.participantIds.includes(participantId),
     );
 
     if (participantUsedInExpense) {
@@ -132,33 +115,26 @@ export class GroupService {
     this.updateGroup({
       ...group,
       participants: group.participants.filter(
-        (participant) =>
-          participant.id !== participantId,
+        (participant) => participant.id !== participantId,
       ),
     });
   }
 
   addExpense(expense: ExpenseInput): Expense {
     const group = this.requireGroup();
-
     this.validateExpense(group, expense);
 
     const newExpense: Expense = {
       ...expense,
       title: expense.title.trim(),
-      participantIds: [
-        ...expense.participantIds,
-      ],
+      participantIds: [...expense.participantIds],
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
     };
 
     this.updateGroup({
       ...group,
-      expenses: [
-        ...group.expenses,
-        newExpense,
-      ],
+      expenses: [...group.expenses, newExpense],
     });
 
     return newExpense;
@@ -184,20 +160,15 @@ export class GroupService {
       ...existingExpense,
       ...changes,
       title: changes.title.trim(),
-      participantIds: [
-        ...changes.participantIds,
-      ],
+      participantIds: [...changes.participantIds],
       id: existingExpense.id,
       createdAt: existingExpense.createdAt,
     };
 
     this.updateGroup({
       ...group,
-      expenses: group.expenses.map(
-        (expense) =>
-          expense.id === expenseId
-            ? updatedExpense
-            : expense,
+      expenses: group.expenses.map((expense) =>
+        expense.id === expenseId ? updatedExpense : expense,
       ),
     });
 
@@ -207,19 +178,14 @@ export class GroupService {
   removeExpense(expenseId: string): void {
     const group = this.requireGroup();
 
-    const expenseExists = group.expenses.some(
-      (expense) => expense.id === expenseId,
-    );
-
-    if (!expenseExists) {
+    if (!group.expenses.some((expense) => expense.id === expenseId)) {
       throw new Error('Dépense introuvable.');
     }
 
     this.updateGroup({
       ...group,
       expenses: group.expenses.filter(
-        (expense) =>
-          expense.id !== expenseId,
+        (expense) => expense.id !== expenseId,
       ),
     });
   }
@@ -233,64 +199,62 @@ export class GroupService {
     group: SplitGroup,
     expense: ExpenseInput,
   ): void {
-    const cleanTitle = expense.title.trim();
-
-    if (!cleanTitle) {
-      throw new Error(
-        'Le titre de la dépense est obligatoire.',
-      );
+    if (!expense.title.trim()) {
+      throw new Error('Le titre de la dépense est obligatoire.');
     }
 
-    if (
-      !Number.isInteger(expense.amount) ||
-      expense.amount <= 0
-    ) {
-      throw new Error(
-        'Le montant doit être un entier positif.',
-      );
+    if (!Number.isInteger(expense.amount) || expense.amount <= 0) {
+      throw new Error('Le montant doit être positif.');
     }
 
     const participantIds = new Set(
-      group.participants.map(
-        (participant) => participant.id,
-      ),
+      group.participants.map((participant) => participant.id),
     );
 
     if (!participantIds.has(expense.paidBy)) {
-      throw new Error(
-        'Le payeur ne fait pas partie du groupe.',
-      );
+      throw new Error('Le payeur ne fait pas partie du groupe.');
     }
 
     if (expense.participantIds.length === 0) {
-      throw new Error(
-        'Sélectionnez au moins un bénéficiaire.',
-      );
+      throw new Error('Sélectionnez au moins un bénéficiaire.');
     }
 
-    const uniqueBeneficiaries = new Set(
-      expense.participantIds,
-    );
+    const uniqueBeneficiaries = new Set(expense.participantIds);
 
-    if (
-      uniqueBeneficiaries.size !==
-      expense.participantIds.length
-    ) {
+    if (uniqueBeneficiaries.size !== expense.participantIds.length) {
       throw new Error(
         'Un bénéficiaire ne peut apparaître plusieurs fois.',
       );
     }
 
-    for (
-      const participantId
-      of uniqueBeneficiaries
-    ) {
+    for (const participantId of uniqueBeneficiaries) {
       if (!participantIds.has(participantId)) {
         throw new Error(
           'Un bénéficiaire ne fait pas partie du groupe.',
         );
       }
     }
+  }
+
+  private loadStoredGroup(): SplitGroup | null {
+    const stored = this.storage.load<SplitGroup>(STORAGE_KEY);
+
+    if (!stored) {
+      return null;
+    }
+
+    // Migration légère des données créées avant l'ajout du choix de devise.
+    if (!stored.currency) {
+      const migrated: SplitGroup = {
+        ...stored,
+        currency: 'XOF',
+      };
+
+      this.storage.save(STORAGE_KEY, migrated);
+      return migrated;
+    }
+
+    return stored;
   }
 
   private requireGroup(): SplitGroup {

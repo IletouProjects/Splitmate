@@ -10,6 +10,11 @@ import {
   Validators,
 } from '@angular/forms';
 
+import {
+  CURRENCIES,
+  CurrencyCode,
+  getCurrency,
+} from '../../models/currency.model';
 import { Expense } from '../../models/expense.model';
 import { GroupService } from '../../services/group.service';
 import { SettlementService } from '../../services/settlement.service';
@@ -26,6 +31,8 @@ export class Dashboard {
   private readonly groupService = inject(GroupService);
   private readonly settlementService = inject(SettlementService);
 
+  readonly currencies = CURRENCIES;
+
   readonly group = this.groupService.group;
   readonly participants = this.groupService.participants;
   readonly expenses = this.groupService.expenses;
@@ -34,15 +41,14 @@ export class Dashboard {
   readonly editingExpenseId = signal<string | null>(null);
   readonly errorMessage = signal('');
   readonly successMessage = signal('');
+  readonly showResetConfirmation = signal(false);
 
   readonly balances = computed(() => {
     const group = this.group();
 
-    if (!group) {
-      return [];
-    }
-
-    return this.settlementService.calculateBalances(group);
+    return group
+      ? this.settlementService.calculateBalances(group)
+      : [];
   });
 
   readonly settlements = computed(() =>
@@ -52,23 +58,24 @@ export class Dashboard {
   );
 
   readonly groupForm = this.fb.nonNullable.group({
-    name: ['', [Validators.required]],
+    name: ['', Validators.required],
+    currency: this.fb.nonNullable.control<CurrencyCode>('EUR'),
   });
 
   readonly participantForm = this.fb.nonNullable.group({
-    name: ['', [Validators.required]],
+    name: ['', Validators.required],
   });
 
   readonly expenseForm = this.fb.nonNullable.group({
-    title: ['', [Validators.required]],
+    title: ['', Validators.required],
     amount: [
       0,
       [
         Validators.required,
-        Validators.min(1),
+        Validators.min(0.01),
       ],
     ],
-    paidBy: ['', [Validators.required]],
+    paidBy: ['', Validators.required],
     participantIds: this.fb.nonNullable.control<string[]>([]),
   });
 
@@ -84,13 +91,20 @@ export class Dashboard {
     }
 
     try {
+      const value = this.groupForm.getRawValue();
+
       this.groupService.createGroup(
-        this.groupForm.controls.name.value,
+        value.name,
+        value.currency,
       );
 
-      this.groupForm.reset();
+      this.groupForm.reset({
+        name: '',
+        currency: 'EUR',
+      });
+
       this.successMessage.set(
-        'Groupe créé avec succès.',
+        'Votre groupe est prêt.',
       );
     } catch (error) {
       this.handleError(error);
@@ -101,7 +115,6 @@ export class Dashboard {
     this.clearMessages();
 
     if (this.participantForm.invalid) {
-      this.participantForm.markAllAsTouched();
       this.errorMessage.set(
         'Veuillez renseigner le nom du participant.',
       );
@@ -116,16 +129,14 @@ export class Dashboard {
 
       this.participantForm.reset();
 
-      if (
-        !this.expenseForm.controls.paidBy.value
-      ) {
+      if (!this.expenseForm.controls.paidBy.value) {
         this.expenseForm.controls.paidBy.setValue(
           participant.id,
         );
       }
 
       this.successMessage.set(
-        `${participant.name} a été ajouté au groupe.`,
+        `${participant.name} a rejoint le groupe.`,
       );
     } catch (error) {
       this.handleError(error);
@@ -140,22 +151,21 @@ export class Dashboard {
         participantId,
       );
 
-      this.removeBeneficiaryFromExpenseForm(
-        participantId,
+      const selected =
+        this.expenseForm.controls.participantIds.value;
+
+      this.expenseForm.controls.participantIds.setValue(
+        selected.filter(
+          (id) => id !== participantId,
+        ),
       );
 
       if (
         this.expenseForm.controls.paidBy.value ===
         participantId
       ) {
-        this.expenseForm.controls.paidBy.setValue(
-          '',
-        );
+        this.expenseForm.controls.paidBy.setValue('');
       }
-
-      this.successMessage.set(
-        'Participant supprimé.',
-      );
     } catch (error) {
       this.handleError(error);
     }
@@ -168,14 +178,12 @@ export class Dashboard {
     const current =
       this.expenseForm.controls.participantIds.value;
 
-    const next = checked
-      ? [...new Set([...current, participantId])]
-      : current.filter(
-          (id) => id !== participantId,
-        );
-
     this.expenseForm.controls.participantIds.setValue(
-      next,
+      checked
+        ? [...new Set([...current, participantId])]
+        : current.filter(
+            (id) => id !== participantId,
+          ),
     );
   }
 
@@ -207,7 +215,16 @@ export class Dashboard {
     if (this.expenseForm.invalid) {
       this.expenseForm.markAllAsTouched();
       this.errorMessage.set(
-        'Veuillez compléter correctement la dépense.',
+        'Complétez correctement la dépense.',
+      );
+      return;
+    }
+
+    const group = this.group();
+
+    if (!group) {
+      this.errorMessage.set(
+        'Aucun groupe actif.',
       );
       return;
     }
@@ -224,7 +241,10 @@ export class Dashboard {
     try {
       const expense = {
         title: value.title,
-        amount: Number(value.amount),
+        amount: this.toMinorUnits(
+          value.amount,
+          group.currency,
+        ),
         paidBy: value.paidBy,
         participantIds: value.participantIds,
       };
@@ -239,7 +259,7 @@ export class Dashboard {
         );
 
         this.successMessage.set(
-          'Dépense modifiée.',
+          'Dépense mise à jour.',
         );
       } else {
         this.groupService.addExpense(expense);
@@ -256,13 +276,21 @@ export class Dashboard {
   }
 
   editExpense(expense: Expense): void {
-    this.clearMessages();
+    const group = this.group();
 
+    if (!group) {
+      return;
+    }
+
+    this.clearMessages();
     this.editingExpenseId.set(expense.id);
 
     this.expenseForm.setValue({
       title: expense.title,
-      amount: expense.amount,
+      amount: this.fromMinorUnits(
+        expense.amount,
+        group.currency,
+      ),
       paidBy: expense.paidBy,
       participantIds: [
         ...expense.participantIds,
@@ -302,11 +330,24 @@ export class Dashboard {
     }
   }
 
-  resetGroup(): void {
+  requestReset(): void {
+    this.showResetConfirmation.set(true);
+  }
+
+  cancelReset(): void {
+    this.showResetConfirmation.set(false);
+  }
+
+  confirmReset(): void {
     this.groupService.resetGroup();
 
-    this.groupForm.reset();
+    this.groupForm.reset({
+      name: '',
+      currency: 'EUR',
+    });
+
     this.participantForm.reset();
+
     this.expenseForm.reset({
       title: '',
       amount: 0,
@@ -315,6 +356,7 @@ export class Dashboard {
     });
 
     this.editingExpenseId.set(null);
+    this.showResetConfirmation.set(false);
     this.clearMessages();
   }
 
@@ -329,23 +371,80 @@ export class Dashboard {
     );
   }
 
-  formatFcfa(amount: number): string {
-    return `${new Intl.NumberFormat(
-      'fr-FR',
-    ).format(amount)} FCFA`;
+  formatMoney(amountInMinorUnits: number): string {
+    const group = this.group();
+
+    if (!group) {
+      return '';
+    }
+
+    const currency = getCurrency(
+      group.currency,
+    );
+
+    return new Intl.NumberFormat(
+      currency.locale,
+      {
+        style: 'currency',
+        currency: currency.code,
+        minimumFractionDigits:
+          currency.minorUnitFactor === 1 ? 0 : 2,
+        maximumFractionDigits:
+          currency.minorUnitFactor === 1 ? 0 : 2,
+      },
+    ).format(
+      amountInMinorUnits /
+        currency.minorUnitFactor,
+    );
   }
 
-  private removeBeneficiaryFromExpenseForm(
-    participantId: string,
-  ): void {
-    const current =
-      this.expenseForm.controls.participantIds.value;
+  currencyLabel(): string {
+    const group = this.group();
 
-    this.expenseForm.controls.participantIds.setValue(
-      current.filter(
-        (id) => id !== participantId,
-      ),
-    );
+    return group
+      ? getCurrency(group.currency).label
+      : '';
+  }
+
+  currencySymbol(): string {
+    const group = this.group();
+
+    return group
+      ? getCurrency(group.currency).symbol
+      : '';
+  }
+
+  amountStep(): string {
+    const group = this.group();
+
+    if (!group) {
+      return '0.01';
+    }
+
+    return getCurrency(group.currency)
+      .minorUnitFactor === 1
+      ? '1'
+      : '0.01';
+  }
+
+  private toMinorUnits(
+    amount: number,
+    currencyCode: CurrencyCode,
+  ): number {
+    const factor =
+      getCurrency(currencyCode).minorUnitFactor;
+
+    return Math.round(amount * factor);
+  }
+
+  private fromMinorUnits(
+    amount: number,
+    currencyCode: CurrencyCode,
+  ): number {
+    const factor =
+      getCurrency(currencyCode).minorUnitFactor;
+
+    return amount / factor;
   }
 
   private clearMessages(): void {
