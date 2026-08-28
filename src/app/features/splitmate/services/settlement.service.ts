@@ -10,55 +10,58 @@ import { Settlement } from '../models/settlement.model';
 })
 export class SettlementService {
 
-  /**
-   * Calcule le montant payé, dû et le solde
-   * de chaque participant du groupe.
-   */
   calculateBalances(group: SplitGroup): ParticipantBalance[] {
     const balances = new Map<string, ParticipantBalance>();
 
-    for (const participant of group.participants) {
-      balances.set(participant.id, {
-        participantId: participant.id,
-        participantName: participant.name,
-        paid: 0,
-        owed: 0,
-        balance: 0,
-      });
-    }
-
     for (const expense of group.expenses) {
-      this.validateExpense(expense, balances);
+      this.validateExpense(expense, group);
 
-      const payerBalance = balances.get(expense.paidBy)!;
-
-      payerBalance.paid += expense.amount;
-
-      const beneficiaryIds = [
-        ...new Set(expense.participantIds),
-      ].sort();
+      const beneficiaryIds = [...new Set(expense.participantIds)].sort();
 
       const baseShare = Math.floor(
-        expense.amount / beneficiaryIds.length,
+        expense.amount / beneficiaryIds.length
       );
 
       const remainder =
         expense.amount % beneficiaryIds.length;
 
-      beneficiaryIds.forEach((participantId, index) => {
-        const participantBalance = balances.get(participantId)!;
+      /*
+       * Le payeur est crédité du montant total
+       * dans la devise de la dépense.
+       */
+      const payer = group.participants.find(
+        participant => participant.id === expense.paidBy
+      )!;
 
-        /**
-         * Exemple :
-         *
-         * 10 000 / 3
-         *
-         * 3334
-         * 3333
-         * 3333
-         *
-         * Total = 10 000
-         */
+      const payerBalance = this.getOrCreateBalance(
+        balances,
+        payer.id,
+        payer.name,
+        expense.currency
+      );
+
+      payerBalance.paid += expense.amount;
+
+      /*
+       * Répartition exacte entre les bénéficiaires.
+       *
+       * Exemple :
+       * 10 000 / 3
+       * = 3334 + 3333 + 3333
+       */
+      beneficiaryIds.forEach((participantId, index) => {
+        const participant = group.participants.find(
+          item => item.id === participantId
+        )!;
+
+        const participantBalance =
+          this.getOrCreateBalance(
+            balances,
+            participant.id,
+            participant.name,
+            expense.currency
+          );
+
         const share =
           baseShare + (index < remainder ? 1 : 0);
 
@@ -66,142 +69,243 @@ export class SettlementService {
       });
     }
 
-    return [...balances.values()].map((item) => ({
-      ...item,
-      balance: item.paid - item.owed,
-    }));
-  }
-
-  /**
-   * Transforme les soldes en remboursements.
-   *
-   * Un solde positif doit recevoir.
-   * Un solde négatif doit payer.
-   */
-  calculateSettlements(
-    balances: ParticipantBalance[],
-  ): Settlement[] {
-    const totalBalance = balances.reduce(
-      (total, item) => total + item.balance,
-      0,
+    const result = Array.from(balances.values()).map(
+      balance => ({
+        ...balance,
+        balance: balance.paid - balance.owed,
+      })
     );
 
-    if (totalBalance !== 0) {
-      throw new Error(
-        `Les soldes sont incohérents : somme = ${totalBalance} FCFA.`,
-      );
-    }
+    this.validateBalances(result);
 
-    const creditors = balances
-      .filter((item) => item.balance > 0)
-      .map((item) => ({
-        participantId: item.participantId,
-        participantName: item.participantName,
-        remaining: item.balance,
-      }))
-      .sort(
-        (a, b) =>
-          b.remaining - a.remaining ||
-          a.participantId.localeCompare(b.participantId),
-      );
+    return result;
+  }
 
-    const debtors = balances
-      .filter((item) => item.balance < 0)
-      .map((item) => ({
-        participantId: item.participantId,
-        participantName: item.participantName,
-        remaining: Math.abs(item.balance),
-      }))
-      .sort(
-        (a, b) =>
-          b.remaining - a.remaining ||
-          a.participantId.localeCompare(b.participantId),
-      );
+  calculateSettlements(
+    balances: ParticipantBalance[]
+  ): Settlement[] {
 
     const settlements: Settlement[] = [];
 
-    let debtorIndex = 0;
-    let creditorIndex = 0;
+    /*
+     * On traite chaque devise séparément.
+     */
+    const currencies = [
+      ...new Set(
+        balances.map(balance => balance.currency)
+      ),
+    ];
 
-    while (
-      debtorIndex < debtors.length &&
-      creditorIndex < creditors.length
-    ) {
-      const debtor = debtors[debtorIndex];
-      const creditor = creditors[creditorIndex];
+    for (const currency of currencies) {
 
-      const amount = Math.min(
-        debtor.remaining,
-        creditor.remaining,
+      const currencyBalances =
+        balances.filter(
+          balance => balance.currency === currency
+        );
+
+      const total = currencyBalances.reduce(
+        (sum, item) => sum + item.balance,
+        0
       );
 
-      settlements.push({
-        fromParticipantId: debtor.participantId,
-        fromParticipantName: debtor.participantName,
-
-        toParticipantId: creditor.participantId,
-        toParticipantName: creditor.participantName,
-
-        amount,
-      });
-
-      debtor.remaining -= amount;
-      creditor.remaining -= amount;
-
-      if (debtor.remaining === 0) {
-        debtorIndex++;
+      if (total !== 0) {
+        throw new Error(
+          `Les soldes ${currency} ne sont pas équilibrés.`
+        );
       }
 
-      if (creditor.remaining === 0) {
-        creditorIndex++;
+      const creditors = currencyBalances
+        .filter(item => item.balance > 0)
+        .map(item => ({
+          ...item,
+          remaining: item.balance,
+        }))
+        .sort(
+          (a, b) =>
+            b.remaining - a.remaining ||
+            a.participantId.localeCompare(
+              b.participantId
+            )
+        );
+
+      const debtors = currencyBalances
+        .filter(item => item.balance < 0)
+        .map(item => ({
+          ...item,
+          remaining: Math.abs(item.balance),
+        }))
+        .sort(
+          (a, b) =>
+            b.remaining - a.remaining ||
+            a.participantId.localeCompare(
+              b.participantId
+            )
+        );
+
+      let debtorIndex = 0;
+      let creditorIndex = 0;
+
+      while (
+        debtorIndex < debtors.length &&
+        creditorIndex < creditors.length
+      ) {
+        const debtor = debtors[debtorIndex];
+        const creditor = creditors[creditorIndex];
+
+        const amount = Math.min(
+          debtor.remaining,
+          creditor.remaining
+        );
+
+        settlements.push({
+          fromParticipantId: debtor.participantId,
+          fromParticipantName:
+            debtor.participantName,
+
+          toParticipantId:
+            creditor.participantId,
+          toParticipantName:
+            creditor.participantName,
+
+          amount,
+          currency,
+        });
+
+        debtor.remaining -= amount;
+        creditor.remaining -= amount;
+
+        if (debtor.remaining === 0) {
+          debtorIndex++;
+        }
+
+        if (creditor.remaining === 0) {
+          creditorIndex++;
+        }
       }
     }
 
     return settlements;
   }
 
+  private getOrCreateBalance(
+    balances: Map<string, ParticipantBalance>,
+    participantId: string,
+    participantName: string,
+    currency: string
+  ): ParticipantBalance {
+
+    const key =
+      `${participantId}-${currency}`;
+
+    let balance = balances.get(key);
+
+    if (!balance) {
+      balance = {
+        participantId,
+        participantName,
+        currency,
+        paid: 0,
+        owed: 0,
+        balance: 0,
+      };
+
+      balances.set(key, balance);
+    }
+
+    return balance;
+  }
+
   private validateExpense(
     expense: Expense,
-    balances: Map<string, ParticipantBalance>,
+    group: SplitGroup
   ): void {
+
     if (
       !Number.isInteger(expense.amount) ||
       expense.amount <= 0
     ) {
       throw new Error(
-        `Montant invalide pour la dépense "${expense.title}".`,
+        'Le montant doit être un entier positif.'
       );
     }
 
-    if (!balances.has(expense.paidBy)) {
+    if (!expense.currency?.trim()) {
       throw new Error(
-        `Le payeur de la dépense "${expense.title}" n'existe pas dans le groupe.`,
+        'La devise de la dépense est obligatoire.'
       );
     }
 
-    if (expense.participantIds.length === 0) {
+    const payerExists =
+      group.participants.some(
+        participant =>
+          participant.id === expense.paidBy
+      );
+
+    if (!payerExists) {
       throw new Error(
-        `La dépense "${expense.title}" ne contient aucun bénéficiaire.`,
+        'Le payeur de la dépense est invalide.'
       );
     }
 
-    const uniqueParticipants = new Set(
-      expense.participantIds,
-    );
+    if (!expense.participantIds.length) {
+      throw new Error(
+        'La dépense doit avoir au moins un bénéficiaire.'
+      );
+    }
+
+    const uniqueBeneficiaries =
+      new Set(expense.participantIds);
 
     if (
-      uniqueParticipants.size !==
+      uniqueBeneficiaries.size !==
       expense.participantIds.length
     ) {
       throw new Error(
-        `La dépense "${expense.title}" contient des participants en double.`,
+        'Les bénéficiaires contiennent des doublons.'
       );
     }
 
-    for (const participantId of uniqueParticipants) {
-      if (!balances.has(participantId)) {
+    for (const participantId of expense.participantIds) {
+      const exists =
+        group.participants.some(
+          participant =>
+            participant.id === participantId
+        );
+
+      if (!exists) {
         throw new Error(
-          `Un participant de la dépense "${expense.title}" n'existe pas dans le groupe.`,
+          'Un bénéficiaire de la dépense est invalide.'
+        );
+      }
+    }
+  }
+
+  private validateBalances(
+    balances: ParticipantBalance[]
+  ): void {
+
+    const currencies = [
+      ...new Set(
+        balances.map(balance => balance.currency)
+      ),
+    ];
+
+    for (const currency of currencies) {
+
+      const total = balances
+        .filter(
+          balance =>
+            balance.currency === currency
+        )
+        .reduce(
+          (sum, balance) =>
+            sum + balance.balance,
+          0
+        );
+
+      if (total !== 0) {
+        throw new Error(
+          `La somme des soldes ${currency} doit être égale à zéro.`
         );
       }
     }

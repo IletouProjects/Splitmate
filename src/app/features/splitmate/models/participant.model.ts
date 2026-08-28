@@ -1,4 +1,5 @@
-export interface Participant{
-    id: string;
-    name : string;
+export interface Participant {
+  id: string;
+  name: string;
+  currency: string;
 }

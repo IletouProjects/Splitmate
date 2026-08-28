@@ -1,57 +1,53 @@
-export type CurrencyCode = 'XOF' | 'EUR' | 'USD' | 'GBP' | 'CAD';
-
 export interface CurrencyOption {
-  code: CurrencyCode;
+  code: string;
   label: string;
-  symbol: string;
-  locale: string;
-  minorUnitFactor: number;
+  decimals: number;
 }
 
-export const CURRENCIES: readonly CurrencyOption[] = [
+export const SUPPORTED_CURRENCIES: CurrencyOption[] = [
   {
     code: 'XOF',
-    label: 'Franc CFA',
-    symbol: 'FCFA',
-    locale: 'fr-FR',
-    minorUnitFactor: 1,
+    label: 'Franc CFA BCEAO',
+    decimals: 0,
+  },
+  {
+    code: 'XAF',
+    label: 'Franc CFA CEMAC',
+    decimals: 0,
   },
   {
     code: 'EUR',
     label: 'Euro',
-    symbol: '€',
-    locale: 'fr-FR',
-    minorUnitFactor: 100,
+    decimals: 2,
   },
   {
     code: 'USD',
-    label: 'Dollar US',
-    symbol: '$',
-    locale: 'en-US',
-    minorUnitFactor: 100,
-  },
-  {
-    code: 'GBP',
-    label: 'Livre sterling',
-    symbol: '£',
-    locale: 'en-GB',
-    minorUnitFactor: 100,
+    label: 'Dollar américain',
+    decimals: 2,
   },
   {
     code: 'CAD',
     label: 'Dollar canadien',
-    symbol: '$CA',
-    locale: 'fr-CA',
-    minorUnitFactor: 100,
+    decimals: 2,
   },
-] as const;
-
-export function getCurrency(code: CurrencyCode): CurrencyOption {
-  const currency = CURRENCIES.find((item) => item.code === code);
-
-  if (!currency) {
-    throw new Error(`Devise non prise en charge : ${code}.`);
-  }
-
-  return currency;
-}
+  {
+    code: 'GBP',
+    label: 'Livre sterling',
+    decimals: 2,
+  },
+  {
+    code: 'NGN',
+    label: 'Naira nigérian',
+    decimals: 2,
+  },
+  {
+    code: 'GHS',
+    label: 'Cedi ghanéen',
+    decimals: 2,
+  },
+  {
+    code: 'MAD',
+    label: 'Dirham marocain',
+    decimals: 2,
+  },
+];

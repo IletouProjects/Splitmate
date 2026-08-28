@@ -4,6 +4,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
+
 import {
   FormBuilder,
   ReactiveFormsModule,
@@ -11,452 +12,753 @@ import {
 } from '@angular/forms';
 
 import {
-  CURRENCIES,
-  CurrencyCode,
-  getCurrency,
+  SUPPORTED_CURRENCIES,
 } from '../../models/currency.model';
+
 import { Expense } from '../../models/expense.model';
+
 import { GroupService } from '../../services/group.service';
 import { SettlementService } from '../../services/settlement.service';
+
 
 @Component({
   selector: 'app-splitmate-dashboard',
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [
+    ReactiveFormsModule,
+  ],
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.scss',
 })
 export class Dashboard {
-  private readonly fb = inject(FormBuilder);
-  private readonly groupService = inject(GroupService);
-  private readonly settlementService = inject(SettlementService);
+  private readonly fb =
+    inject(FormBuilder);
 
-  readonly currencies = CURRENCIES;
+  private readonly groupService =
+    inject(GroupService);
 
-  readonly group = this.groupService.group;
-  readonly participants = this.groupService.participants;
-  readonly expenses = this.groupService.expenses;
-  readonly totalExpenses = this.groupService.totalExpenses;
+  private readonly settlementService =
+    inject(SettlementService);
 
-  readonly editingExpenseId = signal<string | null>(null);
-  readonly errorMessage = signal('');
-  readonly successMessage = signal('');
-  readonly showResetConfirmation = signal(false);
+  /*
+   * Données principales
+   */
+  readonly group =
+    this.groupService.group;
 
-  readonly balances = computed(() => {
-    const group = this.group();
+  readonly participants =
+    this.groupService.participants;
 
-    return group
-      ? this.settlementService.calculateBalances(group)
-      : [];
-  });
+  readonly expenses =
+    this.groupService.expenses;
 
-  readonly settlements = computed(() =>
-    this.settlementService.calculateSettlements(
-      this.balances(),
-    ),
-  );
+  readonly totalsByCurrency =
+    this.groupService.totalsByCurrency;
 
-  readonly groupForm = this.fb.nonNullable.group({
-    name: ['', Validators.required],
-    currency: this.fb.nonNullable.control<CurrencyCode>('EUR'),
-  });
+  readonly currencies =
+    SUPPORTED_CURRENCIES;
 
-  readonly participantForm = this.fb.nonNullable.group({
-    name: ['', Validators.required],
-  });
+  /*
+   * États de l'interface
+   */
+  readonly editingExpenseId =
+    signal<string | null>(null);
 
-  readonly expenseForm = this.fb.nonNullable.group({
-    title: ['', Validators.required],
-    amount: [
-      0,
-      [
+  readonly errorMessage =
+    signal<string | null>(null);
+
+  readonly successMessage =
+    signal<string | null>(null);
+
+  /*
+   * Calcul des soldes.
+   *
+   * Chaque devise est traitée
+   * indépendamment.
+   */
+  readonly balances =
+    computed(() => {
+      const group =
+        this.group();
+
+      if (!group) {
+        return [];
+      }
+
+      return this.settlementService
+        .calculateBalances(group);
+    });
+
+  /*
+   * Calcul du plan de remboursement.
+   */
+  readonly settlements =
+    computed(() => {
+      return this.settlementService
+        .calculateSettlements(
+          this.balances()
+        );
+    });
+
+  /*
+   * Formulaire groupe.
+   *
+   * Le groupe n'a volontairement
+   * aucune devise.
+   */
+  readonly groupForm =
+    this.fb.nonNullable.group({
+      name: [
+        '',
         Validators.required,
-        Validators.min(0.01),
       ],
-    ],
-    paidBy: ['', Validators.required],
-    participantIds: this.fb.nonNullable.control<string[]>([]),
-  });
+    });
 
+  /*
+   * Chaque participant possède
+   * sa devise préférée.
+   */
+  readonly participantForm =
+    this.fb.nonNullable.group({
+      name: [
+        '',
+        Validators.required,
+      ],
+
+      currency: [
+        'XOF',
+        Validators.required,
+      ],
+    });
+
+  /*
+   * Une dépense possède également
+   * sa propre devise.
+   */
+  readonly expenseForm =
+    this.fb.nonNullable.group({
+      title: [
+        '',
+        Validators.required,
+      ],
+
+      amount: [
+        0,
+        [
+          Validators.required,
+          Validators.min(0.01),
+        ],
+      ],
+
+      currency: [
+        'XOF',
+        Validators.required,
+      ],
+
+      paidBy: [
+        '',
+        Validators.required,
+      ],
+
+      participantIds:
+        this.fb.nonNullable.control<
+          string[]
+        >([]),
+    });
+
+  /*
+   * Création du groupe
+   */
   createGroup(): void {
     this.clearMessages();
 
-    if (this.groupForm.invalid) {
-      this.groupForm.markAllAsTouched();
-      this.errorMessage.set(
-        'Veuillez renseigner un nom de groupe.',
-      );
-      return;
-    }
-
     try {
-      const value = this.groupForm.getRawValue();
+      const {
+        name,
+      } =
+        this.groupForm
+          .getRawValue();
 
-      this.groupService.createGroup(
-        value.name,
-        value.currency,
-      );
+      this.groupService
+        .createGroup(name);
 
       this.groupForm.reset({
         name: '',
-        currency: 'EUR',
       });
 
-      this.successMessage.set(
-        'Votre groupe est prêt.',
+      this.showSuccess(
+        'Groupe créé avec succès.'
       );
     } catch (error) {
       this.handleError(error);
     }
   }
 
+  /*
+   * Ajout d'un participant
+   */
   addParticipant(): void {
     this.clearMessages();
 
-    if (this.participantForm.invalid) {
-      this.errorMessage.set(
-        'Veuillez renseigner le nom du participant.',
-      );
-      return;
-    }
-
     try {
+      const {
+        name,
+        currency,
+      } =
+        this.participantForm
+          .getRawValue();
+
       const participant =
-        this.groupService.addParticipant(
-          this.participantForm.controls.name.value,
-        );
+        this.groupService
+          .addParticipant(
+            name,
+            currency
+          );
 
-      this.participantForm.reset();
+      /*
+       * Si c'est le premier participant,
+       * il devient automatiquement
+       * le payeur proposé.
+       */
+      if (
+        !this.expenseForm
+          .controls
+          .paidBy
+          .value
+      ) {
+        this.expenseForm
+          .patchValue({
+            paidBy:
+              participant.id,
 
-      if (!this.expenseForm.controls.paidBy.value) {
-        this.expenseForm.controls.paidBy.setValue(
-          participant.id,
-        );
+            currency:
+              participant.currency,
+          });
       }
 
-      this.successMessage.set(
-        `${participant.name} a rejoint le groupe.`,
+      this.participantForm
+        .reset({
+          name: '',
+          currency: 'XOF',
+        });
+
+      this.showSuccess(
+        'Participant ajouté.'
       );
     } catch (error) {
       this.handleError(error);
     }
   }
 
-  removeParticipant(participantId: string): void {
+  /*
+   * Suppression participant
+   */
+  removeParticipant(
+    participantId: string
+  ): void {
     this.clearMessages();
 
     try {
-      this.groupService.removeParticipant(
-        participantId,
+      this.groupService
+        .removeParticipant(
+          participantId
+        );
+
+      this.showSuccess(
+        'Participant supprimé.'
       );
-
-      const selected =
-        this.expenseForm.controls.participantIds.value;
-
-      this.expenseForm.controls.participantIds.setValue(
-        selected.filter(
-          (id) => id !== participantId,
-        ),
-      );
-
-      if (
-        this.expenseForm.controls.paidBy.value ===
-        participantId
-      ) {
-        this.expenseForm.controls.paidBy.setValue('');
-      }
     } catch (error) {
       this.handleError(error);
     }
   }
 
-  toggleBeneficiary(
-    participantId: string,
-    checked: boolean,
+  /*
+   * Quand le payeur change,
+   * on pré-sélectionne automatiquement
+   * sa devise préférée.
+   *
+   * L'utilisateur peut toujours changer
+   * ensuite la devise de la dépense.
+   */
+  onPayerChange(
+    participantId: string
   ): void {
+    const participant =
+      this.participants()
+        .find(
+          item =>
+            item.id ===
+            participantId
+        );
+
+    if (!participant) {
+      return;
+    }
+
+    this.expenseForm
+      .patchValue({
+        paidBy:
+          participant.id,
+
+        currency:
+          participant.currency,
+      });
+  }
+
+  /*
+   * Sélection / désélection
+   * d'un bénéficiaire.
+   */
+  toggleParticipant(
+    participantId: string
+  ): void {
+    const control =
+      this.expenseForm.controls
+        .participantIds;
+
     const current =
-      this.expenseForm.controls.participantIds.value;
+      control.value;
 
-    this.expenseForm.controls.participantIds.setValue(
-      checked
-        ? [...new Set([...current, participantId])]
-        : current.filter(
-            (id) => id !== participantId,
-          ),
-    );
-  }
+    if (
+      current.includes(
+        participantId
+      )
+    ) {
+      control.setValue(
+        current.filter(
+          id =>
+            id !==
+            participantId
+        )
+      );
 
-  isBeneficiarySelected(
-    participantId: string,
-  ): boolean {
-    return this.expenseForm.controls.participantIds.value.includes(
+      return;
+    }
+
+    control.setValue([
+      ...current,
       participantId,
-    );
+    ]);
   }
 
-  selectAllBeneficiaries(): void {
-    this.expenseForm.controls.participantIds.setValue(
-      this.participants().map(
-        (participant) => participant.id,
-      ),
-    );
+  /*
+   * Vérifie si un participant
+   * est sélectionné.
+   */
+  isParticipantSelected(
+    participantId: string
+  ): boolean {
+    return this.expenseForm
+      .controls
+      .participantIds
+      .value
+      .includes(
+        participantId
+      );
   }
 
-  clearBeneficiaries(): void {
-    this.expenseForm.controls.participantIds.setValue(
-      [],
-    );
+  /*
+   * Sélectionne tous les membres.
+   */
+  selectAllParticipants(): void {
+    this.expenseForm
+      .controls
+      .participantIds
+      .setValue(
+        this.participants()
+          .map(
+            participant =>
+              participant.id
+          )
+      );
   }
 
+  /*
+   * Désélectionne tous les membres.
+   */
+  clearParticipants(): void {
+    this.expenseForm
+      .controls
+      .participantIds
+      .setValue([]);
+  }
+
+  /*
+   * Ajout ou modification
+   * d'une dépense.
+   */
   submitExpense(): void {
     this.clearMessages();
 
-    if (this.expenseForm.invalid) {
-      this.expenseForm.markAllAsTouched();
-      this.errorMessage.set(
-        'Complétez correctement la dépense.',
-      );
-      return;
-    }
-
-    const group = this.group();
-
-    if (!group) {
-      this.errorMessage.set(
-        'Aucun groupe actif.',
-      );
-      return;
-    }
-
-    const value = this.expenseForm.getRawValue();
-
-    if (value.participantIds.length === 0) {
-      this.errorMessage.set(
-        'Sélectionnez au moins un bénéficiaire.',
-      );
-      return;
-    }
-
     try {
+      const value =
+        this.expenseForm
+          .getRawValue();
+
+      if (
+        !value.participantIds.length
+      ) {
+        throw new Error(
+          'Sélectionnez au moins un participant.'
+        );
+      }
+
+      /*
+       * Conversion vers unité mineure.
+       *
+       * XOF :
+       * 60000 -> 60000
+       *
+       * EUR :
+       * 600 -> 60000 centimes
+       */
+      const amount =
+        this.toMinorUnits(
+          Number(
+            value.amount
+          ),
+          value.currency
+        );
+
       const expense = {
-        title: value.title,
-        amount: this.toMinorUnits(
-          value.amount,
-          group.currency,
-        ),
-        paidBy: value.paidBy,
-        participantIds: value.participantIds,
+        title:
+          value.title,
+
+        amount,
+
+        currency:
+          value.currency,
+
+        paidBy:
+          value.paidBy,
+
+        participantIds: [
+          ...value.participantIds,
+        ],
       };
 
       const editingId =
         this.editingExpenseId();
 
       if (editingId) {
-        this.groupService.updateExpense(
-          editingId,
-          expense,
-        );
+        this.groupService
+          .updateExpense(
+            editingId,
+            expense
+          );
 
-        this.successMessage.set(
-          'Dépense mise à jour.',
+        this.showSuccess(
+          'Dépense modifiée.'
         );
       } else {
-        this.groupService.addExpense(expense);
+        this.groupService
+          .addExpense(
+            expense
+          );
 
-        this.successMessage.set(
-          'Dépense ajoutée.',
+        this.showSuccess(
+          'Dépense ajoutée.'
         );
       }
 
-      this.cancelExpenseEdit();
+      this.resetExpenseForm();
     } catch (error) {
       this.handleError(error);
     }
   }
 
-  editExpense(expense: Expense): void {
-    const group = this.group();
-
-    if (!group) {
-      return;
-    }
-
+  /*
+   * Passage en mode édition.
+   */
+  editExpense(
+    expense: Expense
+  ): void {
     this.clearMessages();
-    this.editingExpenseId.set(expense.id);
 
-    this.expenseForm.setValue({
-      title: expense.title,
-      amount: this.fromMinorUnits(
-        expense.amount,
-        group.currency,
-      ),
-      paidBy: expense.paidBy,
-      participantIds: [
-        ...expense.participantIds,
-      ],
-    });
+    this.editingExpenseId
+      .set(
+        expense.id
+      );
+
+    this.expenseForm
+      .setValue({
+        title:
+          expense.title,
+
+        amount:
+          this.fromMinorUnits(
+            expense.amount,
+            expense.currency
+          ),
+
+        currency:
+          expense.currency,
+
+        paidBy:
+          expense.paidBy,
+
+        participantIds: [
+          ...expense.participantIds,
+        ],
+      });
   }
 
-  cancelExpenseEdit(): void {
-    this.editingExpenseId.set(null);
+  /*
+   * Annule l'édition.
+   */
+  cancelEdit(): void {
+    this.editingExpenseId
+      .set(null);
 
-    this.expenseForm.reset({
-      title: '',
-      amount: 0,
-      paidBy:
-        this.participants()[0]?.id ?? '',
-      participantIds: [],
-    });
+    this.resetExpenseForm();
   }
 
-  removeExpense(expenseId: string): void {
+  /*
+   * Suppression dépense
+   */
+  removeExpense(
+    expenseId: string
+  ): void {
     this.clearMessages();
 
     try {
-      this.groupService.removeExpense(expenseId);
+      this.groupService
+        .removeExpense(
+          expenseId
+        );
 
       if (
-        this.editingExpenseId() === expenseId
+        this.editingExpenseId() ===
+        expenseId
       ) {
-        this.cancelExpenseEdit();
+        this.resetExpenseForm();
       }
 
-      this.successMessage.set(
-        'Dépense supprimée.',
+      this.showSuccess(
+        'Dépense supprimée.'
       );
     } catch (error) {
       this.handleError(error);
     }
   }
 
-  requestReset(): void {
-    this.showResetConfirmation.set(true);
-  }
-
-  cancelReset(): void {
-    this.showResetConfirmation.set(false);
-  }
-
-  confirmReset(): void {
-    this.groupService.resetGroup();
-
-    this.groupForm.reset({
-      name: '',
-      currency: 'EUR',
-    });
-
-    this.participantForm.reset();
-
-    this.expenseForm.reset({
-      title: '',
-      amount: 0,
-      paidBy: '',
-      participantIds: [],
-    });
-
-    this.editingExpenseId.set(null);
-    this.showResetConfirmation.set(false);
+  /*
+   * Réinitialise tout le groupe.
+   */
+  resetGroup(): void {
     this.clearMessages();
+
+    try {
+      this.groupService
+        .resetGroup();
+
+      this.editingExpenseId
+        .set(null);
+
+      this.groupForm.reset({
+        name: '',
+      });
+
+      this.participantForm
+        .reset({
+          name: '',
+          currency: 'XOF',
+        });
+
+      this.resetExpenseForm();
+
+      this.showSuccess(
+        'Groupe réinitialisé.'
+      );
+    } catch (error) {
+      this.handleError(error);
+    }
   }
 
+  /*
+   * Nom d'un participant depuis son id.
+   */
   participantName(
-    participantId: string,
+    participantId: string
   ): string {
     return (
-      this.participants().find(
-        (participant) =>
-          participant.id === participantId,
-      )?.name ?? 'Participant inconnu'
+      this.participants()
+        .find(
+          participant =>
+            participant.id ===
+            participantId
+        )
+        ?.name ??
+      'Inconnu'
     );
   }
 
-  formatMoney(amountInMinorUnits: number): string {
-    const group = this.group();
-
-    if (!group) {
-      return '';
-    }
-
-    const currency = getCurrency(
-      group.currency,
+  /*
+   * Nom lisible d'une devise.
+   */
+  currencyLabel(
+    currency: string
+  ): string {
+    return (
+      this.currencies.find(
+        item =>
+          item.code ===
+          currency
+      )?.label ??
+      currency
     );
+  }
+
+  /*
+   * Nombre de décimales
+   * d'une devise.
+   */
+  currencyDecimals(
+    currency: string
+  ): number {
+    return (
+      this.currencies.find(
+        item =>
+          item.code ===
+          currency
+      )?.decimals ??
+      2
+    );
+  }
+
+  /*
+   * Format monétaire.
+   *
+   * Les montants stockés sont
+   * exprimés en unités mineures.
+   */
+  formatMoney(
+    amount: number,
+    currency: string
+  ): string {
+    const decimals =
+      this.currencyDecimals(
+        currency
+      );
+
+    const divisor =
+      10 ** decimals;
+
+    const majorAmount =
+      amount / divisor;
 
     return new Intl.NumberFormat(
-      currency.locale,
+      'fr-FR',
       {
         style: 'currency',
-        currency: currency.code,
+        currency,
         minimumFractionDigits:
-          currency.minorUnitFactor === 1 ? 0 : 2,
+          decimals,
         maximumFractionDigits:
-          currency.minorUnitFactor === 1 ? 0 : 2,
-      },
+          decimals,
+      }
     ).format(
-      amountInMinorUnits /
-        currency.minorUnitFactor,
+      majorAmount
     );
   }
 
-  currencyLabel(): string {
-    const group = this.group();
-
-    return group
-      ? getCurrency(group.currency).label
-      : '';
-  }
-
-  currencySymbol(): string {
-    const group = this.group();
-
-    return group
-      ? getCurrency(group.currency).symbol
-      : '';
-  }
-
-  amountStep(): string {
-    const group = this.group();
-
-    if (!group) {
-      return '0.01';
-    }
-
-    return getCurrency(group.currency)
-      .minorUnitFactor === 1
-      ? '1'
-      : '0.01';
-  }
-
+  /*
+   * Transforme un montant utilisateur
+   * vers l'unité mineure.
+   */
   private toMinorUnits(
     amount: number,
-    currencyCode: CurrencyCode,
+    currency: string
   ): number {
-    const factor =
-      getCurrency(currencyCode).minorUnitFactor;
+    const decimals =
+      this.currencyDecimals(
+        currency
+      );
 
-    return Math.round(amount * factor);
+    return Math.round(
+      amount *
+      10 ** decimals
+    );
   }
 
+  /*
+   * Transforme l'unité mineure
+   * vers la valeur affichée
+   * dans le formulaire.
+   */
   private fromMinorUnits(
     amount: number,
-    currencyCode: CurrencyCode,
+    currency: string
   ): number {
-    const factor =
-      getCurrency(currencyCode).minorUnitFactor;
+    const decimals =
+      this.currencyDecimals(
+        currency
+      );
 
-    return amount / factor;
+    return (
+      amount /
+      10 ** decimals
+    );
+  }
+
+  private resetExpenseForm(): void {
+    this.editingExpenseId
+      .set(null);
+
+    const firstParticipant =
+      this.participants()[0];
+
+    this.expenseForm
+      .reset({
+        title: '',
+        amount: 0,
+
+        currency:
+          firstParticipant
+            ?.currency ??
+          'XOF',
+
+        paidBy:
+          firstParticipant
+            ?.id ??
+          '',
+
+        participantIds: [],
+      });
   }
 
   private clearMessages(): void {
-    this.errorMessage.set('');
-    this.successMessage.set('');
+    this.errorMessage
+      .set(null);
+
+    this.successMessage
+      .set(null);
   }
 
-  private handleError(error: unknown): void {
-    this.errorMessage.set(
+  private showSuccess(
+    message: string
+  ): void {
+    this.successMessage
+      .set(message);
+  }
+
+  private handleError(
+    error: unknown
+  ): void {
+    if (
       error instanceof Error
-        ? error.message
-        : 'Une erreur inattendue est survenue.',
-    );
+    ) {
+      this.errorMessage
+        .set(
+          error.message
+        );
+
+      return;
+    }
+
+    this.errorMessage
+      .set(
+        'Une erreur est survenue.'
+      );
   }
 }
